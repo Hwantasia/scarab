@@ -70,6 +70,7 @@
 #include "log/on_off_path_log.h"
 #include "log/dependency_chain_log.h"
 #include "log/fill_buffer_log.h"
+#include "tea/tea_pipeline.h"
 
 /**************************************************************************************/
 /* Global vars */
@@ -264,6 +265,9 @@ void cmp_cores(void) {
       update_decoupled_fe();
       update_fdip();
       update_eip();
+      /* Run the TEA backend after both the frontend and the main backend have
+         advanced so the helper thread samples the same control/timing context. */
+      tea_pipeline_cycle(proc_id);
 
       cmp_measure_chip_util();
       // 매 사이클 Backward Walk 엔진 구동
@@ -535,5 +539,8 @@ void cmp_warmup(Op* op) {
 static void cmp_measure_chip_util() {
   Flag chip_busy =
       exec->fus_busy || mem->uncores[exec->proc_id].num_outstanding_l1_accesses > 0 || dc->idle_cycle > cycle_count;
+  /* Treat TEA FU usage as additional pressure so global DVFS / throttling logic
+     recognizes helper-thread activity. */
+  chip_busy |= (tea_backend_fu_usage(exec->proc_id) > 0);
   perf_pred_core_busy(exec->proc_id, chip_busy);
 }

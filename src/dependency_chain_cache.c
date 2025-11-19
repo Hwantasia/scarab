@@ -166,7 +166,7 @@ void add_dependency_chain(uns proc_id, Op* ordered_ops, int ordered_op_count) {
         }
     }
     log_dependency_chain_entry(proc_id, dep_entry, cycle_count);
-    
+
     // --- 파트 3: 블록 캐시 및 빈 블록 Tag Store 저장 로직 ---
     Dependency_Chain_Cache_Entry* block_cache = block_caches[proc_id];
     Block_Cache_Tag_Entry* tag_store = empty_block_tag_store[proc_id];

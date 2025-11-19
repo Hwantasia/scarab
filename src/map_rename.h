@@ -205,4 +205,6 @@ void reg_file_commit(Op *op);                 // release the previous register w
 
 extern struct reg_file **reg_file;
 
+void map_snapshot_arch_rat(uns proc_id, int *arch_to_phys, Flag *arch_valid, uns max_regs);
+
 #endif /* #ifndef __MAP_RENAME_H__ */

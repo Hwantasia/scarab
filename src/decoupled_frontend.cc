@@ -18,6 +18,7 @@
 #include "thread.h"
 
 #include "confidence/conf.hpp"
+#include "tea/tea_fetch.h"
 
 #define DEBUG(proc_id, args...) _DEBUG(proc_id, DEBUG_DECOUPLED_FE, ##args)
 
@@ -342,6 +343,11 @@ void Decoupled_FE::update() {
     uint64_t pred_addr = 3;
     Op* op = alloc_op(proc_id);
     frontend_fetch_op(proc_id, op);
+    if (tea_is_enabled()) {
+      /* Feed the TEA fetch queue using the same BP-issued PC so that the helper
+         thread observes identical control-flow timing. */
+      tea_fetch_stage(proc_id, op->inst_info->addr);
+    }
     op->op_num = dfe_op_count++;
     op->off_path = off_path;
     if (!CONFIDENCE_ENABLE)

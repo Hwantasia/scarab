@@ -1631,3 +1631,27 @@ void reg_file_commit(Op *op) {
   reg_file = map_data->reg_file;
   reg_renaming_scheme_func_table[REG_RENAMING_SCHEME].commit(op);
 }
+
+void map_snapshot_arch_rat(uns proc_id, int *arch_to_phys, Flag *arch_valid, uns max_regs) {
+  ASSERT(proc_id, map_data && map_data->proc_id == proc_id);
+  ASSERT(proc_id, arch_to_phys || arch_valid);
+  reg_file = map_data->reg_file;
+  struct reg_table *arch_table = reg_file[REG_FILE_REG_TYPE_GENERAL_PURPOSE]->reg_table[REG_TABLE_TYPE_ARCHITECTURAL];
+  uns limit = arch_table ? arch_table->size : 0;
+  if (limit > max_regs)
+    limit = max_regs;
+  for (uns ii = 0; ii < limit; ++ii) {
+    struct reg_table_entry *entry = &arch_table->entries[ii];
+    int child_id = entry->child_reg_id;
+    if (arch_to_phys)
+      arch_to_phys[ii] = child_id;
+    if (arch_valid)
+      arch_valid[ii] = (child_id != REG_TABLE_REG_ID_INVALID);
+  }
+  for (uns ii = limit; ii < max_regs; ++ii) {
+    if (arch_to_phys)
+      arch_to_phys[ii] = REG_TABLE_REG_ID_INVALID;
+    if (arch_valid)
+      arch_valid[ii] = FALSE;
+  }
+}

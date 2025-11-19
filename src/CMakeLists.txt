@@ -60,6 +60,18 @@ foreach(dir IN LISTS scarab_dirs)
     set(srcs ${srcs} ${dir_srcs})
 endforeach()
 
+# The TEA backend recently moved from a single monolithic source to several
+# stage-specific compilation units.  The GLOB above only evaluates when CMake
+# (re)configures, so explicit entries ensure these files are always part of the
+# target even if a developer has not re-run CMake after pulling new sources.
+list(APPEND srcs
+    tea/tea_backend_state.c
+    tea/tea_node_stage.c
+    tea/tea_issue_queue.c
+    tea/tea_exec_stage.c
+)
+list(REMOVE_DUPLICATES srcs)
+
 add_executable(scarab 
     ${srcs}
 )

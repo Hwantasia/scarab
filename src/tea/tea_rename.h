@@ -2,25 +2,39 @@
 #define __TEA_RENAME_H__
 
 #include "globals/global_types.h"
-#include "op.h"
-#include "tea_decode.h"
 #include "globals/assert.h"
+#include "core.param.h"          // MAX_ARCH_REGS 등 core 파라미터
+#include "dependency_chain_cache.h" // MAX_CHAIN_LENGTH 사용
+#include "op.h"
 
-// 최대 아키텍처 레지스터 개수와 최대 물리 레지스터 개수 (시뮬레이터 파라미터 기반)
-// Scarab에서 아키텍처 레지스터는 64개 (예: x86-64)로 가정하고, 물리 레지스터는 그 몇 배 (예: 256)로 설정
-#define TEA_MAX_ARCH_REGS   MAX_ARCH_REGS   /**< 아키텍처 레지스터 수 (Fill Buffer 추적 한계와 동일) */
-#define TEA_MAX_PHYS_REGS   256             /**< TEA 전용 shadow PR 개수 */
+// [TEA 구현 지침]
+// 별도의 TEA 파이프라인을 위해 독립적인 Rename 구조체를 정의한다.
+// 메인 파이프라인과 공유하지 않는 TEA 전용 리소스를 정의한다.
+
+// Scarab의 MAX_ARCH_REGS 사용 (x86-64 기준 보통 64~128)
+#define TEA_MAX_ARCH_REGS   MAX_ARCH_REGS   
+// TEA 전용 물리 레지스터 개수 (논문에 따라 충분히 크게 잡음)
+#define TEA_MAX_PHYS_REGS   256             
 #define TEA_PHYS_INVALID    (-1)
-#define TEA_MAX_NODE        MAX_CHAIN_LENGTH    /**< 동시에 활발히 존재 가능한 TEA uop 상한 */
+// 동시에 처리 가능한 TEA uOP의 최대 개수 (Issue Queue 크기)
+#define TEA_MAX_NODE        MAX_CHAIN_LENGTH    
 
+/**
+ * @brief TEA 전용 물리 레지스터 상태 정보
+ */
 typedef struct {
-    Flag valid;       /**< 최신 값을 보유하는지 */
-    uns  refcount;    /**< 참조 중인 소스 개수 */
+    Flag valid;       /**< 데이터가 준비되었는지 여부 (Live-in은 즉시 TRUE) */
+    uns  refcount;    /**< 해당 PR을 소스로 참조하는 카운트 (Free 시점 판단용) */
+    Op* producer_op;  /**< (디버깅용) 값을 생성한 TEA Op. Live-in인 경우 NULL일 수 있음 */
 } TEA_PhysReg_Info;
 
+/**
+ * @brief TEA uOP별 Rename 메타데이터
+ * 원래 Op 구조체를 건드리지 않고 별도로 저장하여 메인 스레드 영향을 최소화
+ */
 typedef struct {
     Flag valid;
-    Op*  op;
+    Op* op;
     int  src_phys_id[MAX_SRCS];
     Flag src_ready[MAX_SRCS];
     int  dst_phys_id[MAX_DESTS];
@@ -28,39 +42,52 @@ typedef struct {
     uns  num_dst;
 } TEA_Op_Metadata;
 
-// Shadow RAT (Register Alias Table) 및 관련 구조 정의
+/**
+ * @brief TEA Rename 단계의 핵심 상태 (Shadow RAT + Free List + PRF)
+ */
 typedef struct TEA_Rename_State_struct {
-    int   map_table[TEA_MAX_ARCH_REGS];      /**< 각 아키텍처 레지스터의 현재 물리 레지스터 매핑 */
-    Flag  map_valid[TEA_MAX_ARCH_REGS];      /**< 해당 맵핑이 유효한지 (할당 여부 표시) */
-    TEA_PhysReg_Info phys_regs[TEA_MAX_PHYS_REGS];
+    // Shadow RAT: Arch Reg ID -> TEA Phys Reg ID
+    int   map_table[TEA_MAX_ARCH_REGS];      
+    Flag  map_valid[TEA_MAX_ARCH_REGS];      
+    
+    // TEA 전용 물리 레지스터 파일 (값은 저장하지 않고 상태만 관리)
+    TEA_PhysReg_Info phys_regs[TEA_MAX_PHYS_REGS]; 
+    
+    // Free List 관리
     int   free_list[TEA_MAX_PHYS_REGS];
-    int   free_head;
-    int   free_tail;
     int   free_count;
-    Flag  shadow_synced;
+    
+    // Op 메타데이터 풀 (동적 할당 부하를 줄이기 위한 풀링)
     TEA_Op_Metadata meta_pool[TEA_MAX_NODE];
     Flag  meta_in_use[TEA_MAX_NODE];
+
+    Flag  shadow_synced; /**< 현재 스냅샷이 메인 스레드와 동기화 되었는지 여부 */
 } TEA_Rename_State;
 
-// 런타임에 NUM_CORES 크기로 동적 할당
+// 전역 포인터 (tea_rename.c에서 할당)
 extern TEA_Rename_State* tea_rename_state;
 
-// TEA Issue 큐 (Rename -> Issue 단계 사이에 보관되는 TEA uop들)
+// TEA Issue Queue Entry
 typedef struct {
     Op* op;
     TEA_Op_Metadata* meta;
 } TEA_Issue_Entry;
 
+// TEA Issue Queue (Circular Buffer)
 typedef struct TEA_Issue_Queue_struct {
     TEA_Issue_Entry entries[TEA_MAX_NODE];
     int head;
     int tail;
     int count;
 } TEA_Issue_Queue;
-// 런타임에 NUM_CORES 크기로 동적 할당
+
 extern TEA_Issue_Queue* tea_issue_queue;
 
+// 함수 프로토타입
 void tea_init_rename(uns proc_id);
 void tea_rename_stage(uns proc_id);
+Flag tea_issue_queue_is_full(uns proc_id);
+TEA_Op_Metadata* tea_meta_alloc(TEA_Rename_State* rs);
+void tea_meta_release(TEA_Rename_State* rs, TEA_Op_Metadata* meta);
 
 #endif /* __TEA_RENAME_H__ */

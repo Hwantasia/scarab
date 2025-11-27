@@ -38,11 +38,11 @@ void tea_decode_stage(uns proc_id) {
     ensure_decode_buffers_initialized();
     TEA_Decode_Buffer* dbuf = &tea_decode_buffer[proc_id];
 
-    // 항상 버퍼를 깨끗이 초기화
-    dbuf->num_ops = 0;
-    if (dbuf->capacity > 0) {
-        memset(dbuf->ops, 0, sizeof(Op*) * (size_t)dbuf->capacity);
-    }
+    // 항상 버퍼를 깨끗이 초기화 -> REMOVED to prevent dropping unconsumed Ops
+    // dbuf->num_ops = 0;
+    // if (dbuf->capacity > 0) {
+    //     memset(dbuf->ops, 0, sizeof(Op*) * (size_t)dbuf->capacity);
+    // }
 
     if (!tea_contexts || !tea_contexts[proc_id]) {
         return;
@@ -60,7 +60,7 @@ void tea_decode_stage(uns proc_id) {
     }
 
     while (dbuf->num_ops < decode_width && fq->count > 0) {
-        Op* op = &fq->entries[fq->head];
+        Op* op = fq->entries[fq->head];
         op->decode_cycle = cycle_count;
         dbuf->ops[dbuf->num_ops++] = op;
 

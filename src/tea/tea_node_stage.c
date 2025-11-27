@@ -1,4 +1,5 @@
 #include "tea_backend.h"
+#include "tea_op_pool.h"
 
 #include "globals/assert.h"
 #include "globals/global_vars.h"
@@ -56,6 +57,7 @@ void tea_node_stage_retire(uns proc_id, TEA_Backend_State* backend, TEA_Rename_S
         backend->rob.count--;
 
         tea_meta_release(rs_state, head->meta);
+        tea_free_op(head->op);
         head->op = NULL;
         head->meta = NULL;
         tea_release_node_entry(backend, head);

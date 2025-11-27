@@ -2,6 +2,7 @@
 
 #include "globals/assert.h"
 #include "globals/global_vars.h"
+#include "statistics.h"
 
 static Flag tea_operands_ready(TEA_Rename_State* rs_state, TEA_Node_Entry* entry) {
     if (!entry || !entry->meta)
@@ -75,6 +76,8 @@ void tea_exec_stage_run(uns proc_id, TEA_Backend_State* backend, TEA_Rename_Stat
 
         if (entry->op)
             entry->op->state = OS_DONE;
+        
+        STAT_EVENT(proc_id, TEA_OP_COMPLETED);
 
         tea_backend_record_branch_completion(proc_id, entry);
 

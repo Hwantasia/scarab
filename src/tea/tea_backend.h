@@ -55,6 +55,7 @@ TEA_Backend_State* tea_backend_get_state(uns proc_id);
 
 uns tea_backend_rs_usage(uns proc_id);
 uns tea_backend_fu_usage(uns proc_id);
+Flag tea_backend_is_idle(uns proc_id);
 
 /* Stage level entry points -------------------------------------------------------- */
 

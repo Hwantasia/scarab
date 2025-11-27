@@ -26,7 +26,7 @@ static inline uns tea_rat_sync_latency_cycles(void) {
 
 // TEA Fetch Queue 자료구조 정의
 typedef struct TEA_Fetch_Queue_struct {
-    Op              entries[TEA_FETCH_QUEUE_SIZE];  // TEA 페치 큐의 명령어 배열
+    Op*             entries[TEA_FETCH_QUEUE_SIZE];  // TEA 페치 큐의 명령어 포인터 배열
     int             head;       // 큐의 시작 인덱스
     int             tail;       // 큐의 끝 다음 인덱스
     int             count;      // 현재 큐에 있는 명령어 개수

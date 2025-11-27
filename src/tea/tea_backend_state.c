@@ -1,5 +1,5 @@
 #include "tea_backend.h"
-
+#include <stdio.h>
 #include "bp/bp.h"
 #include "cmp_model.h"
 #include "core.param.h"
@@ -8,6 +8,8 @@
 #include "globals/utils.h"
 #include "node_stage.h"
 #include "tea_fetch.h"
+#include "tea_rename.h"
+#include "tea_decode.h"
 
 /* Global backend state ----------------------------------------------------------- */
 static TEA_Backend_State* tea_backend_states = NULL;
@@ -136,6 +138,25 @@ static Flag tea_issue_early_recovery(uns proc_id, Addr branch_pc) {
     Bp_Recovery_Info* info = &cmp_model.bp_recovery_info[proc_id];
     bp_sched_recovery(info, main_branch, cycle_count, FALSE, FALSE, TEA_EARLY_RECOVERY_CYCLES);
     STAT_EVENT(proc_id, TEA_BRANCH_EARLY_FLUSH);
+
+    // [TEA Logging] Log successful early recovery
+    FILE* log_file = fopen("tea_early_recovery.log", "a");
+    if (log_file) {
+        Counter saved_cycles = 0;
+        // Estimate saved cycles if main op execution cycle is known and in the future
+        if (main_branch->exec_cycle > cycle_count) {
+            saved_cycles = main_branch->exec_cycle - cycle_count;
+        }
+        
+        fprintf(log_file, "[Cycle: %llu] Early Recovery Triggered | Branch PC: 0x%llx | Op Num: %llu | Main Op State: %d | Est. Cycles Saved: %llu\n",
+                (unsigned long long)cycle_count,
+                (unsigned long long)branch_pc,
+                (unsigned long long)main_branch->op_num,
+                main_branch->state,
+                (unsigned long long)saved_cycles);
+        fclose(log_file);
+    }
+
     return TRUE;
 }
 
@@ -176,4 +197,24 @@ static Op* tea_find_branch_candidate(uns proc_id, Addr branch_pc) {
         candidate = it;
     }
     return candidate;
+}
+
+Flag tea_backend_is_idle(uns proc_id) {
+    if (!tea_backend_states)
+        return TRUE;
+    TEA_Backend_State* backend = &tea_backend_states[proc_id];
+    
+    // Check ROB
+    if (backend->rob.count > 0)
+        return FALSE;
+
+    // Check Issue Queue (if initialized)
+    if (tea_issue_queue && tea_issue_queue[proc_id].count > 0)
+        return FALSE;
+
+    // Check Decode Buffer (if initialized)
+    if (tea_decode_buffer && tea_decode_buffer[proc_id].num_ops > 0)
+        return FALSE;
+
+    return TRUE;
 }

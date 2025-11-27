@@ -70,7 +70,10 @@
 #include "log/on_off_path_log.h"
 #include "log/dependency_chain_log.h"
 #include "log/fill_buffer_log.h"
+#include "log/fill_buffer_log.h"
 #include "tea/tea_pipeline.h"
+#include "tea/tea_fetch.h"
+#include "tea/tea_op_pool.h"
 
 /**************************************************************************************/
 /* Global vars */
@@ -143,6 +146,9 @@ void cmp_init(uns mode) {
     init_eip(proc_id);
     init_djolt(proc_id);
     init_fnlmma(proc_id);
+    
+    tea_init(proc_id);
+    tea_init_op_pool();
   }
 
   cmp_model.window_size = NODE_TABLE_SIZE;

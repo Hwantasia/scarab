@@ -1,7 +1,10 @@
 #include "tea_fetch.h"
+#include "tea_op_pool.h"
+#include "tea_backend.h"
 #include "dependency_chain_cache.h"
 #include "on_off_path_cache.h"
 #include "globals/global_vars.h"
+#include "statistics.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,6 +12,15 @@
 TEA_Context** tea_contexts = NULL;
 
 static void tea_reset_fetch_queue(TEA_Fetch_Queue* fq) {
+    // Free any existing ops in the queue
+    while (fq->count > 0) {
+        Op* op = fq->entries[fq->head];
+        if (op) {
+            tea_free_op(op);
+        }
+        fq->head = (fq->head + 1) % TEA_FETCH_QUEUE_SIZE;
+        fq->count--;
+    }
     fq->head = fq->tail = fq->count = 0;
     if (fq->name == NULL) {
         fq->name = strdup("TEA_Fetch_Queue");
@@ -65,15 +77,43 @@ static Flag tea_enqueue_block_entry(uns proc_id, TEA_Context* tctx, Dependency_C
 
     Flag enqueued = FALSE;
     for (int ii = 0; ii < block_entry->chain_length && space > 0; ++ii) {
-        Op* dst_op = &fq->entries[fq->tail];
-        *dst_op = block_entry->chain[ii];
+        Op* dst_op = tea_alloc_op(proc_id);
+        
+        // Save identity fields that must be unique to this new TEA Op
+        Op temp_identity;
+        temp_identity.op_num = dst_op->op_num;
+        temp_identity.unique_num = dst_op->unique_num;
+        temp_identity.proc_id = dst_op->proc_id;
+        temp_identity.op_pool_valid = dst_op->op_pool_valid;
+
+        // Copy content from snapshot (this overwrites everything including IDs)
+        *dst_op = block_entry->chain[ii]; 
+
+        // Restore identity fields
+        dst_op->op_num = temp_identity.op_num;
+        dst_op->unique_num = temp_identity.unique_num;
+        dst_op->proc_id = temp_identity.proc_id;
+        dst_op->op_pool_valid = temp_identity.op_pool_valid;
+
+        // Reset runtime flags that shouldn't be inherited from the cached snapshot
+        dst_op->oracle_info.recovery_sch = FALSE;
+        dst_op->oracle_info.mispred = FALSE;
+        dst_op->oracle_info.misfetch = FALSE;
+        dst_op->oracle_info.btb_miss = FALSE;
+        dst_op->oracle_info.no_target = FALSE;
+        dst_op->state = OS_FETCHED;
+        dst_op->done_cycle = MAX_CTR;
+        
         dst_op->chain_bit = TRUE;  // TEA 전용 uop임을 명시
+        
+        fq->entries[fq->tail] = dst_op;
 
         fq->tail = (fq->tail + 1) % TEA_FETCH_QUEUE_SIZE;
         fq->count++;
         space--;
         enqueued = TRUE;
         tctx->ops_enqueued++;
+        STAT_EVENT(proc_id, TEA_OP_ENQUEUED);
     }
 
     if (enqueued) {
@@ -132,7 +172,7 @@ void tea_fetch_stage(uns proc_id, Addr current_fetch_addr) {
 
     if (tctx->state == TEA_STATE_ACTIVE && fq->count == 0 && (!block_entry || block_entry->chain_length == 0)) {
         tea_transition_state(tctx, TEA_STATE_DRAINING);
-    } else if (tctx->state == TEA_STATE_DRAINING && fq->count == 0) {
+    } else if (tctx->state == TEA_STATE_DRAINING && fq->count == 0 && tea_backend_is_idle(proc_id)) {
         tea_transition_state(tctx, TEA_STATE_IDLE);
     }
 }

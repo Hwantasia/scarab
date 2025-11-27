@@ -533,7 +533,7 @@ static inline void exec_stage_bp_resolve(Op* op) {
     bp_resolve_op(g_bp_data, op);
   }
 
-  if(op->oracle_info.recover_at_exec) { //(op->oracle_info.mispred || op->oracle_info.misfetch)
+  if(op->oracle_info.recover_at_exec && !op->oracle_info.recovery_sch) { //(op->oracle_info.mispred || op->oracle_info.misfetch)
     bp_sched_recovery(bp_recovery_info, op, op->exec_cycle, FALSE, FALSE, EXTRA_LATE_RECOVERY_CYCLES);
     log_misprediction_detection_at_exec(op, node, cycle_count, bp_recovery_info); // 추가
     if (!op->off_path)

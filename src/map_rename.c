@@ -534,6 +534,13 @@ static inline void reg_file_snapshot_srt() {
     memcpy(checkpoint->entries, srt->entries, sizeof(struct reg_table_entry) * srt->size);
 
     ASSERT(map_data->proc_id, !checkpoint->is_valid);
+    
+    // [DEBUG] Checkpoint creation logging
+    if (DEBUG_CYCLE_START <= cycle_count && cycle_count <= DEBUG_CYCLE_STOP) {
+      fprintf(stderr, "[CHECKPOINT_CREATE] C=%llu P=%d is_valid=TRUE\n",
+              cycle_count, map_data->proc_id);
+    }
+    
     checkpoint->is_valid = TRUE;
   }
 }
@@ -550,6 +557,12 @@ static inline void reg_file_rollback_srt() {
     struct reg_checkpoint *checkpoint = reg_file[ii]->reg_checkpoint;
     memcpy(srt->entries, checkpoint->entries, sizeof(struct reg_table_entry) * srt->size);
 
+    // [DEBUG] Checkpoint rollback logging
+    if (DEBUG_CYCLE_START <= cycle_count && cycle_count <= DEBUG_CYCLE_STOP) {
+      fprintf(stderr, "[CHECKPOINT_ROLLBACK] C=%llu P=%d is_valid=%d (ASSERTING)\n",
+              cycle_count, map_data->proc_id, checkpoint->is_valid);
+    }
+    
     ASSERT(map_data->proc_id, checkpoint->is_valid);
     checkpoint->is_valid = FALSE;
   }

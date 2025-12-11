@@ -63,6 +63,8 @@ typedef struct Bp_Recovery_Info_struct {
 
   Flag late_bp_recovery;        // TRUE if recovery is due to a late branch prediction.
   Flag late_bp_recovery_wrong;  // TRUE if recovery is due to a late branch prediction that is wrong.
+  
+  Flag frontend_only_recovery;  // [TEA] TRUE if recovery should only flush frontend (OS_FETCHED state)
 
 } Bp_Recovery_Info;
 

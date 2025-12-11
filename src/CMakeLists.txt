@@ -69,6 +69,7 @@ list(APPEND srcs
     tea/tea_node_stage.c
     tea/tea_issue_queue.c
     tea/tea_exec_stage.c
+    tea/tea_decoupled_frontend.c
 )
 list(REMOVE_DUPLICATES srcs)
 

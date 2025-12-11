@@ -24,6 +24,7 @@
  */
 typedef struct {
     Flag valid;       /**< 데이터가 준비되었는지 여부 (Live-in은 즉시 TRUE) */
+    Counter ready_cycle; /**< [TEA-Phase2] 데이터가 준비되는 시점 (Cycle) */
     uns  refcount;    /**< 해당 PR을 소스로 참조하는 카운트 (Free 시점 판단용) */
     Op* producer_op;  /**< (디버깅용) 값을 생성한 TEA Op. Live-in인 경우 NULL일 수 있음 */
 } TEA_PhysReg_Info;
@@ -40,6 +41,7 @@ typedef struct {
     int  dst_phys_id[MAX_DESTS];
     uns  num_src;
     uns  num_dst;
+    Op*  main_op;  // [TEA Early Binding] FTQ\uc5d0\uc11c \ucc3e\uc740 Main Op (Fetch \uc2dc\uc810 \uc5f0\uacb0)
 } TEA_Op_Metadata;
 
 /**
@@ -89,5 +91,12 @@ void tea_rename_stage(uns proc_id);
 Flag tea_issue_queue_is_full(uns proc_id);
 TEA_Op_Metadata* tea_meta_alloc(TEA_Rename_State* rs);
 void tea_meta_release(TEA_Rename_State* rs, TEA_Op_Metadata* meta);
+
+/**
+ * @brief TEA Op의 Metadata를 가져옴
+ * @param op TEA Op
+ * @return TEA_Op_Metadata 포인터, 없으면 NULL
+ */
+TEA_Op_Metadata* tea_get_op_metadata(Op* op);
 
 #endif /* __TEA_RENAME_H__ */

@@ -1,17 +1,23 @@
 #include "tea_fetch.h"
 #include "tea_op_pool.h"
 #include "tea_backend.h"
+#include "tea_decoupled_frontend.h"
 #include "dependency_chain_cache.h"
 #include "on_off_path_cache.h"
+#include "core.param.h"          /* DEBUG_TEA_FETCH_LOG */
+#include "globals/assert.h"
 #include "globals/global_vars.h"
 #include "statistics.h"
+#include "ftq_search.h"
+#include "log/tea_fetch_log.h"
 #include <stdlib.h>
 #include <string.h>
 
 // 전역 변수 정의
 TEA_Context** tea_contexts = NULL;
+static Flag tea_fetch_log_inited = FALSE;
 
-static void tea_reset_fetch_queue(TEA_Fetch_Queue* fq) {
+void tea_reset_fetch_queue(TEA_Fetch_Queue* fq) {
     // Free any existing ops in the queue
     while (fq->count > 0) {
         Op* op = fq->entries[fq->head];
@@ -64,6 +70,135 @@ static TEA_Context* tea_get_or_init_context(uns proc_id) {
     return tea_contexts[proc_id];
 }
 
+/**
+ * @brief Shadow FTQ에서 Op를 가져와 Block Cache의 dependency_mask로 필터링하여 TEA Fetch Queue에 enqueue
+ * 
+ * 논문 Section IV-D: "The TEA thread is initiated on a hit in the Block Cache.
+ * The uops read out are rotated and sent directly to the shadow Rename stage."
+ * 
+ * @param proc_id Core ID
+ * @param tctx TEA Context
+ * @return 하나라도 enqueue되었으면 TRUE
+ */
+static Flag tea_enqueue_from_shadow_ftq(uns proc_id, TEA_Context* tctx) {
+    TEA_FT* tea_ft = tea_shadow_ftq_peek(proc_id);
+    if (!tea_ft || tea_ft->op_count == 0) {
+        return FALSE;
+    }
+    
+    TEA_Fetch_Queue* fq = &tctx->fetch_queue;
+    int space = tea_fetch_queue_space(fq);
+    Flag enqueued = FALSE;
+    
+    /* Original approach: Block Cache lookup per Op */
+    for (uns i = 0; i < tea_ft->op_count && space > 0; i++) {
+        Op* tea_op = tea_ft->ops[i];
+        if (!tea_op || !tea_op->inst_info) continue;
+        
+        /* Block Cache lookup for this Op */
+        Dependency_Chain_Cache_Entry* block_entry = 
+            get_dependency_chain_block(proc_id, tea_op->inst_info->addr);
+        
+        /* [TEA FETCH LOG] Per-Op Block Cache lookup */
+        if (DEBUG_TEA_FETCH_LOG) {
+            if (!tea_fetch_log_inited) {
+                init_tea_fetch_log();
+                tea_fetch_log_inited = TRUE;
+            }
+            log_tea_block_cache_lookup(proc_id, cycle_count, tea_op->inst_info->addr,
+                                       block_entry, i, tea_ft->op_count,
+                                       block_entry && block_entry->is_valid);
+        }
+        
+        Flag in_chain = FALSE;
+        
+        if (block_entry && block_entry->is_valid) {
+            /* Block Cache Hit - Use dependency_mask filtering */
+            if (tea_op->table_info && tea_op->table_info->cf_type != NOT_CF) {
+                /* H2P Branch: 무조건 포함 */
+                in_chain = TRUE;
+            } else if (block_entry->dependency_mask != 0) {
+                /* Non-branch: chain 배열에서 정확한 비트 위치 찾기 */
+                int bit_pos = -1;
+                Addr op_pc = tea_op->inst_info->addr;
+                
+                for (uns j = 0; j < block_entry->total_ops_in_block && j < MAX_CHAIN_LENGTH; j++) {
+                    if (block_entry->chain[j].inst_info && 
+                        block_entry->chain[j].inst_info->addr == op_pc) {
+                        bit_pos = j;
+                        break;
+                    }
+                }
+                
+                if (bit_pos >= 0 && bit_pos < 32) {
+                    if ((block_entry->dependency_mask >> bit_pos) & 1ULL) {
+                        in_chain = TRUE;
+                    }
+                } else {
+                    /* chain 배열에서 찾지 못한 경우: 보수적으로 포함 */
+                    in_chain = TRUE;
+                }
+            }
+        } else {
+            /* Block Cache Miss */
+            STAT_EVENT(proc_id, TEA_BLOCK_CACHE_MISS);
+            /* Fallback: Branch만 포함 */
+            if (tea_op->table_info && tea_op->table_info->cf_type != NOT_CF) {
+                in_chain = TRUE;
+            }
+        }
+        
+        if (!in_chain) {
+            tea_free_op(tea_op);  /* 체인에 없는 Op는 해제 */
+            tea_ft->ops[i] = NULL;
+            continue;  /* Skip Ops not in dependency chain */
+        }
+        
+        /* Mark as chain instruction */
+        tea_op->chain_bit = TRUE;
+        
+        /* Use tea_main_op_link for Early Binding (already set during clone) */
+        /* No need to search FTQ - link is already established! */
+        
+        /* Enqueue to TEA Fetch Queue */
+        fq->entries[fq->tail] = tea_op;
+        fq->tail = (fq->tail + 1) % TEA_FETCH_QUEUE_SIZE;
+        fq->count++;
+        space--;
+        enqueued = TRUE;
+        tctx->ops_enqueued++;
+        STAT_EVENT(proc_id, TEA_OP_ENQUEUED);
+        
+        /* Remove from Shadow FT to prevent double processing */
+        tea_ft->ops[i] = NULL;
+    }
+    
+    /* Consume the Shadow FT if all Ops processed */
+    Flag all_consumed = TRUE;
+    for (uns i = 0; i < tea_ft->op_count; i++) {
+        if (tea_ft->ops[i] != NULL) {
+            all_consumed = FALSE;
+            break;
+        }
+    }
+    if (all_consumed) {
+        tea_shadow_ftq_consume(proc_id);
+    }
+    
+    if (enqueued) {
+        tctx->blocks_fetched++;
+        tctx->last_progress_cycle = cycle_count;
+        if (tctx->state == TEA_STATE_IDLE || tctx->state == TEA_STATE_DRAINING) {
+            if (tea_ft->start_pc != 0) {
+                tctx->trigger_pc = tea_ft->start_pc;
+            }
+            tea_transition_state(tctx, TEA_STATE_ACTIVE);
+        }
+    }
+    
+    return enqueued;
+}
+
 static Flag tea_enqueue_block_entry(uns proc_id, TEA_Context* tctx, Dependency_Chain_Cache_Entry* block_entry) {
     if (!block_entry || !block_entry->is_valid || block_entry->chain_length == 0) {
         return FALSE;
@@ -105,6 +240,23 @@ static Flag tea_enqueue_block_entry(uns proc_id, TEA_Context* tctx, Dependency_C
         dst_op->done_cycle = MAX_CTR;
         
         dst_op->chain_bit = TRUE;  // TEA 전용 uop임을 명시
+        
+        // [TEA Early Binding] FTQ에서 Main Op 검색
+        if (dst_op->table_info && dst_op->inst_info) {
+            Op* main_op = find_op_in_ftq(proc_id, 
+                                         dst_op->inst_info->addr, 
+                                         dst_op->table_info->cf_type);
+            dst_op->tea_main_op_candidate = main_op;
+            
+            // Debugging ASSERT
+            if (main_op) {
+                ASSERT(proc_id, main_op->op_pool_valid);
+                ASSERT(proc_id, main_op->inst_info);
+                ASSERT(proc_id, main_op->inst_info->addr == dst_op->inst_info->addr);
+            }
+        } else {
+            dst_op->tea_main_op_candidate = NULL;
+        }
         
         fq->entries[fq->tail] = dst_op;
 
@@ -157,20 +309,62 @@ void tea_fetch_stage(uns proc_id, Addr current_fetch_addr) {
     if (!tea_is_enabled()) {
         return;
     }
+
     TEA_Context* tctx = tea_get_or_init_context(proc_id);
+    TEA_Fetch_Queue* fq = &tctx->fetch_queue;
+    
+    // [DEBUG] Periodic TEA Fetch state logging (every 1000 cycles)
+    static Counter last_log_cycle[MAX_NUM_PROCS] = {0};
+    if (DEBUG_CYCLE_START <= cycle_count && cycle_count <= DEBUG_CYCLE_STOP) {
+        if (cycle_count - last_log_cycle[proc_id] >= 1000) {
+            fprintf(stderr, "[TEA_FETCH] C=%llu PC=0x%llx Q_cnt=%d State=%d NeedSync=%d SyncRdy=%llu\n",
+                    cycle_count, current_fetch_addr, fq->count, tctx->state,
+                    tea_thread_needs_rat_sync(proc_id), tctx->rat_sync_ready_cycle);
+            last_log_cycle[proc_id] = cycle_count;
+        }
+    }
+    
+    if (tea_thread_needs_rat_sync(proc_id)) {
+        return;
+    }
+
     if (tctx->state == TEA_STATE_DISABLED) {
         return;
     }
-    TEA_Fetch_Queue* fq = &tctx->fetch_queue;
 
-    Dependency_Chain_Cache_Entry* block_entry = get_dependency_chain_block(proc_id, current_fetch_addr);
-    Flag enqueued = tea_enqueue_block_entry(proc_id, tctx, block_entry);
+    /* ============================================================
+     * [Shadow FTQ Integration] Phase 3
+     * 논문 Section IV-D: "Fetch addresses generated by the branch predictor
+     * are sent to both the Block Cache and the I-cache"
+     * 
+     * 1. Shadow FTQ에서 Op를 가져와 Block Cache dependency_mask로 필터링
+     * 2. Shadow FTQ가 비어있으면 기존 Block Cache 직접 접근 방식 사용
+     * ============================================================ */
+    
+    Flag enqueued = FALSE;
+    
+    /* 먼저 Shadow FTQ에서 fetch 시도 (논문 방식) */
+    if (tea_shadow_ftq_count(proc_id) > 0) {
+        enqueued = tea_enqueue_from_shadow_ftq(proc_id, tctx);
+    }
+    
+    /* Shadow FTQ가 비어있으면 기존 Block Cache 직접 접근 (fallback) */
+    if (!enqueued) {
+        Dependency_Chain_Cache_Entry* block_entry = get_dependency_chain_block(proc_id, current_fetch_addr);
+        
+        // [TEA-Phase4] Log Block Cache Miss
+        if (!block_entry || !block_entry->is_valid) {
+            STAT_EVENT(proc_id, TEA_BLOCK_CACHE_MISS);
+        }
+
+        enqueued = tea_enqueue_block_entry(proc_id, tctx, block_entry);
+    }
 
     if (!enqueued && tctx->state == TEA_STATE_IDLE) {
         return;
     }
 
-    if (tctx->state == TEA_STATE_ACTIVE && fq->count == 0 && (!block_entry || block_entry->chain_length == 0)) {
+    if (tctx->state == TEA_STATE_ACTIVE && fq->count == 0) {
         tea_transition_state(tctx, TEA_STATE_DRAINING);
     } else if (tctx->state == TEA_STATE_DRAINING && fq->count == 0 && tea_backend_is_idle(proc_id)) {
         tea_transition_state(tctx, TEA_STATE_IDLE);

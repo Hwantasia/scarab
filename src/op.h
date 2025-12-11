@@ -269,7 +269,14 @@ struct Op_struct {
   int dst_reg_id[MAX_DESTS][REG_TABLE_TYPE_NUM];       // the reg id of allocated reg file entries
   int prev_dst_reg_id[MAX_DESTS][REG_TABLE_TYPE_NUM];  // the previous dst reg id with the same parent register id
   // }}}
-
+  // {{{ TEA Early Binding
+  struct Op_struct* tea_main_op_candidate;  // [TEA Legacy] FTQ에서 찾은 Main Op (Fetch 시점 연결)
+  // }}
+  // {{{ TEA Shadow FTQ - Op Matching
+  struct Op_struct* tea_main_op_link;       // [TEA Shadow FTQ] Main Op 포인터 (클론 시 연결)
+  Counter tea_main_op_num;                  // [TEA Shadow FTQ] Main Op의 op_num
+  Counter tea_main_unique_num;              // [TEA Shadow FTQ] Main Op의 unique_num
+  // }}}
   Flag chain_bit;
 };
 

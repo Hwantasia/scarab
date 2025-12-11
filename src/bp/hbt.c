@@ -5,20 +5,19 @@
 #include "debug/debug.param.h"
 #include "debug/debug_macros.h"
 #include "globals/utils.h"        
+#include "globals/global_vars.h"
 #include <string.h>               
 
 // .h 파일에 extern으로 선언된 전역 변수들의 실체를 정의
 HbtEntry hbt_table[HBT_SIZE];
 uns64    retired_branch_count = 0;
 
-// HBT의 모든 카운터를 주기적으로 15씩 감소시키는 내부 함수
+// HBT의 모든 카운터를 주기적으로 1씩 감소시키는 내부 함수
 static void hbt_periodic_decrement(void) {
   for (int i = 0; i < HBT_SIZE; i++) {
-    // 카운터가 0이 아니면 15만큼 감소 (Saturating at 0)
-    if (hbt_table[i].counter > 15) {
-      hbt_table[i].counter -= 15;
-    } else {
-      hbt_table[i].counter = 0;
+    // 카운터가 0이 아니면 1만큼 감소 (Saturating at 0)
+    if (hbt_table[i].counter > 0) {
+      hbt_table[i].counter--;
     }
   }
 }
@@ -71,20 +70,28 @@ void hbt_update(Op* op) {
   if (mispred) {
     _DEBUG(0, DEBUG_HBT, "OpNum=%llu | Mispredicted branch at index %u (tag %llu): Before counter %u\n",
           op->op_num, index, tag, entry->counter);
-    // 예측에 실패했을 때만 카운터를 1 증가시킴 (saturating)
-    entry->counter = SAT_INC(entry->counter, HBT_CTR_MAX);
+    
+    // If newly allocated (counter was 0), initialize to 1.
+    // Otherwise, increment.
+    if (entry->counter == 0) {
+        entry->counter = 1;
+    } else {
+        entry->counter = SAT_INC(entry->counter, HBT_CTR_MAX);
+    }
+
     _DEBUG(0, DEBUG_HBT, "OpNum=%llu | Mispredicted branch at index %u (tag %llu): After counter %u\n",
            op->op_num, index, tag, entry->counter);
   }
   // ※ 예측 성공 시에는 아무것도 하지 않는 것이 HBT의 핵심 로직입니다.
 
   // 5. 주기적 감소 로직 트리거
-  // retire된 브랜치 수를 1 증가시키고,
-  retired_branch_count++;
-  // 1000의 배수가 될 때마다 모든 카운터를 15씩 감소시키는 함수 호출
-  if ((retired_branch_count % 1000) == 0) {
-     _DEBUG(0, DEBUG_HBT, "Triggering periodic decrement at branch count = %llu\n", retired_branch_count);
+  // 50k instructions마다 1씩 감소 (0.02 MPKI threshold)
+  // inst_count는 전역 변수로 총 retired instruction 수를 나타냄 (global_vars.h)
+  static Counter last_decay_inst_count = 0;
+  if (*inst_count >= last_decay_inst_count + 50000) {
+     _DEBUG(0, DEBUG_HBT, "Triggering periodic decrement at inst count = %llu\n", *inst_count);
     hbt_periodic_decrement();
+    last_decay_inst_count = *inst_count;
   }
 }
 
@@ -98,8 +105,8 @@ Flag hbt_is_hard_branch(Addr pc) {
   uns64 tag   = pc / HBT_SIZE;
   HbtEntry* entry = &hbt_table[index];
 
-  // 해당 entry의 주인이 맞고(tag 일치), 카운터가 최댓값에 도달했다면 'Hard'로 판단
-  if (entry->tag == tag && entry->counter == HBT_CTR_MAX) {
+  // 해당 entry의 주인이 맞고(tag 일치), 카운터가 1보다 크면 'Hard'로 판단
+  if (entry->tag == tag && entry->counter > 1) {
     return TRUE;
   }
   return FALSE;

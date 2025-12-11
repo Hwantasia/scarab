@@ -394,25 +394,61 @@ void cmp_recover() {
     op->oracle_info.recovery_sch = FALSE;
   }
 
-  reg_file_recover(bp_recovery_info->recovery_op);
-  recover_thread(td, bp_recovery_info->recovery_fetch_addr, bp_recovery_info->recovery_op_num,
-                 bp_recovery_info->recovery_inst_uid, bp_recovery_info->late_bp_recovery_wrong);
+  /* ============================================================
+   * [TEA] Frontend-Only Recovery Path (논문 Section IV-F)
+   * 
+   * "Note that when the frontend is partially flushed, the state 
+   * of the main RAT does not need to be recovered."
+   * 
+   * frontend_only_recovery == TRUE:
+   *   - BP 히스토리/PC는 이미 bp_recover_op에서 수정됨
+   *   - 프런트엔드만 flush (FTQ/IDQ/Decode/Icache 등)
+   *   - RAT/ROB/RS/LSQ/Node 등 백엔드는 건드리지 않음
+   * 
+   * frontend_only_recovery == FALSE:
+   *   - 기존 전체 recovery (백엔드 포함)
+   * ============================================================ */
 
-  recover_decoupled_fe();
-  recover_fdip();
-  recover_icache_stage();
-  recover_uop_cache();
-  recover_decode_stage();
-  recover_uop_queue_stage();
-  recover_idq_stage();
-  recover_map_stage();
-  recover_node_stage();
-  recover_lsq();
-  recover_exec_stage();
-  recover_dcache_stage();
-  recover_memory();
+  if (bp_recovery_info->frontend_only_recovery) {
+    /* Frontend-only: 백엔드 복원 생략, 프런트엔드만 플러시 */
+    recover_decoupled_fe();   /* FTQ partial flush (already implemented) */
+    recover_fdip();
+    recover_icache_stage();
+    recover_uop_cache();
+    recover_decode_stage();
+    recover_uop_queue_stage();
+    recover_idq_stage();
+    /* Skip: reg_file_recover, recover_thread, recover_map_stage, 
+     * recover_node_stage, recover_lsq, recover_exec_stage, 
+     * recover_dcache_stage, recover_memory */
+  } else {
+    /* Full recovery: 기존 백엔드 포함 전체 복원 */
+    reg_file_recover(bp_recovery_info->recovery_op);
+    recover_thread(td, bp_recovery_info->recovery_fetch_addr, bp_recovery_info->recovery_op_num,
+                   bp_recovery_info->recovery_inst_uid, bp_recovery_info->late_bp_recovery_wrong);
+
+    recover_decoupled_fe();
+    recover_fdip();
+    recover_icache_stage();
+    recover_uop_cache();
+    recover_decode_stage();
+    recover_uop_queue_stage();
+    recover_idq_stage();
+    recover_map_stage();
+    recover_node_stage();
+    recover_lsq();
+    recover_exec_stage();
+    recover_dcache_stage();
+    recover_memory();
+  }
 
   log_recovery_end(node, cycle_count, bp_recovery_info);
+  
+  /* [문제 3] frontend_only_recovery 플래그 리셋 */
+  /* 이번 recovery 완료 후 플래그를 초기화하여 다음 misprediction이 
+   * 올바른 경로(full vs frontend-only)로 가도록 함 */
+  bp_recovery_info->frontend_only_recovery = FALSE;
+  
   bp_recovery_info->recovery_cycle = MAX_CTR;
   bp_recovery_info->redirect_cycle = MAX_CTR;
 }

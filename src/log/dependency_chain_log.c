@@ -109,12 +109,14 @@ void log_dependency_chain_block(uns proc_id, Dependency_Chain_Cache_Entry* entry
 
     // --- [ New code to print the bitmask ] ---
     char mask_str[65]; // 64 bits + null terminator
-    // Iterate from 0 to total_ops_in_block to build the binary string
-    for(int i = 0; i < entry->total_ops_in_block; ++i) {
+    // BUGFIX: Cap to 64 to prevent buffer overflow
+    int mask_bits = entry->total_ops_in_block > 64 ? 64 : entry->total_ops_in_block;
+    // Iterate from 0 to mask_bits to build the binary string
+    for(int i = 0; i < mask_bits; ++i) {
         // Check if the i-th bit is set in the mask
         mask_str[i] = (entry->dependency_mask >> i) & 1 ? '1' : '0';
     }
-    mask_str[entry->total_ops_in_block] = '\0'; // Add null terminator
+    mask_str[mask_bits] = '\0'; // Add null terminator
     fprintf(block_cache_log_file, "Block Length: %-3u Dependency Mask: %s\n", 
             entry->total_ops_in_block, mask_str);
     // ---------------------------------------------
@@ -153,10 +155,11 @@ void log_full_cache_state(uns proc_id, Counter cycle_count) {
         if (entry->is_valid) {
             // --- [ Modified Part: Added Mask Info ] ---
             char mask_str[65];
-            for(int k = 0; k < entry->total_ops_in_block; ++k) {
+            int mask_bits = entry->total_ops_in_block > 64 ? 64 : entry->total_ops_in_block;
+            for(int k = 0; k < mask_bits; ++k) {
                 mask_str[k] = (entry->dependency_mask >> k) & 1 ? '1' : '0';
             }
-            mask_str[entry->total_ops_in_block] = '\0';
+            mask_str[mask_bits] = '\0';
 
             fprintf(dependency_chain_log_file, "[Index %-4d] PC: 0x%08llx | OpNum: %-10llu | BlockLen: %-2u | Mask: %s\n",
                     i,

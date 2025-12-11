@@ -19,6 +19,8 @@
 
 #include "confidence/conf.hpp"
 #include "tea/tea_fetch.h"
+#include "ftq_search.h"
+#include "tea/tea_decoupled_frontend.h"
 
 #define DEBUG(proc_id, args...) _DEBUG(proc_id, DEBUG_DECOUPLED_FE, ##args)
 
@@ -46,6 +48,12 @@ class Decoupled_FE {
   void conf_resolve_cf(Op* op) { conf->resolve_cf(op); }
   Off_Path_Reason eval_off_path_reason(Op* op);
   void print_conf_data() { conf->print_data(); }
+
+  // [TEA Early Binding] FTQ public access
+  std::deque<FT>& get_ftq() { return ftq; }
+  
+  // [TEA Shadow FTQ] proc_id getter
+  uns get_proc_id() { return proc_id; }
 
  private:
   void init(uns proc_id);
@@ -86,6 +94,10 @@ void alloc_mem_decoupled_fe(uns numCores) {
 }
 
 void init_decoupled_fe(uns proc_id, const char*) {
+  // [TEA Shadow FTQ] Initialize Shadow FTQ for this core
+  if (TEA_ENABLE) {
+    tea_shadow_ftq_init(proc_id);
+  }
 }
 
 bool decoupled_fe_is_off_path() {
@@ -102,6 +114,11 @@ void reset_decoupled_fe() {
 
 void recover_decoupled_fe() {
   dfe->recover();
+  
+  // [TEA Shadow FTQ] Flush Shadow FTQ on recovery
+  if (TEA_ENABLE && dfe) {
+    tea_shadow_ftq_recover(dfe->get_proc_id());
+  }
 }
 
 void debug_decoupled_fe() {
@@ -221,10 +238,51 @@ void Decoupled_FE::recover() {
   cur_op = nullptr;
   recovery_addr = bp_recovery_info->recovery_fetch_addr;
 
-  for (auto it = ftq.begin(); it != ftq.end(); it++) {
-    it->free_ops_and_clear();
+  /* ============================================================
+   * [TEA] Partial FTQ Flush (논문 Section IV-F)
+   * 
+   * frontend_only_recovery == TRUE:
+   *   - mispred 브랜치보다 젊은(unique_num 큰) Op만 제거
+   *   - 논문: "Partial flushes in the frontend are supported by 
+   *     adding a comparator before the flush signal for each 
+   *     pipeline stage to compare the timestamp"
+   * 
+   * frontend_only_recovery == FALSE:
+   *   - 기존 동작: 전체 FTQ flush
+   * ============================================================ */
+  
+  if (bp_recovery_info->frontend_only_recovery) {
+    /* Partial flush: 젊은 Op만 제거 */
+    Counter recovery_unique = bp_recovery_info->recovery_unique_num;
+    
+    for (auto it = ftq.begin(); it != ftq.end(); ) {
+      /* FT 내의 Op들을 확인 */
+      for (auto op_it = it->ops.begin(); op_it != it->ops.end(); ) {
+        Op* op = *op_it;
+        if (op && op->unique_num > recovery_unique) {
+          /* 젊은 Op - 제거 */
+          free_op(op);
+          op_it = it->ops.erase(op_it);
+        } else {
+          /* 오래된 Op - 유지 */
+          ++op_it;
+        }
+      }
+      
+      /* FT가 비었으면 제거 */
+      if (it->ops.empty()) {
+        it = ftq.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  } else {
+    /* Full flush: 기존 동작 */
+    for (auto it = ftq.begin(); it != ftq.end(); it++) {
+      it->free_ops_and_clear();
+    }
+    ftq.clear();
   }
-  ftq.clear();
 
   current_ft_to_push.free_ops_and_clear();
   current_ft_to_push.set_ft_started_by(FT_STARTED_BY_RECOVERY);
@@ -462,6 +520,19 @@ void Decoupled_FE::update() {
       if (CONFIDENCE_ENABLE) {
         conf->update(current_ft_to_push);
       }
+      
+      // [TEA Shadow FTQ] Clone Ops from Main FT to Shadow FTQ
+      if (TEA_ENABLE && !off_path) {
+        // Start a new Shadow FT slot first
+        tea_shadow_ft_start(proc_id);
+        
+        // Get the FT we just pushed and clone its Ops
+        FT& pushed_ft = ftq.back();
+        for (Op* main_op : pushed_ft.ops) {
+          tea_shadow_ft_add_op(proc_id, main_op);
+        }
+      }
+      
       current_ft_to_push = FT(proc_id);
       if (ft_ended_by == FT_ICACHE_LINE_BOUNDARY) {
         current_ft_to_push.set_ft_started_by(FT_STARTED_BY_ICACHE_LINE_BOUNDARY);
@@ -624,3 +695,60 @@ Off_Path_Reason Decoupled_FE::eval_off_path_reason(Op* op) {
     ASSERT(proc_id, FALSE);
   }
 }
+// Append to end of decoupled_frontend.cc
+
+extern "C" {
+
+/**
+ * @brief FTQ에서 Main Op를 검색 (TEA Early Binding용)
+ * 
+ * @param proc_id 코어 ID
+ * @param pc 검색할 PC
+ * @param cf_type 분기 타입
+ * @return 매칭되는 Main Op, 없으면 NULL
+ * 
+ * FTQ를 역순으로 순회하여 가장 최근에 Fetch된 일치하는 Op를 반환합니다.
+ */
+Op* find_op_in_ftq(uns proc_id, Addr pc, Cf_Type cf_type) {
+  ASSERT(proc_id, proc_id < NUM_CORES);
+  
+  if (proc_id >= per_core_dfe.size()) {
+    return NULL;  // Frontend 초기화 안 됨
+  }
+  
+  Decoupled_FE* dfe_ptr = &per_core_dfe[proc_id];
+  std::deque<FT>& ftq = dfe_ptr->get_ftq();
+  
+  // FTQ를 역순으로 검색 (최신 것부터)
+  for (auto it = ftq.rbegin(); it != ftq.rend(); ++it) {
+    const FT& ft = *it;
+    const std::vector<Op*>& ops = const_cast<FT&>(ft).get_ops();
+    
+    // FT 내부의 Ops를 역순으로 검색
+    for (auto op_it = ops.rbegin(); op_it != ops.rend(); ++op_it) {
+      Op* op = *op_it;
+      
+      // Validity checks
+      if (!op || !op->op_pool_valid) continue;
+      if (!op->inst_info || !op->table_info) continue;
+      
+      // PC 매칭
+      if (op->inst_info->addr != pc) continue;
+      
+      // cf_type 매칭
+      if (op->table_info->cf_type != cf_type) continue;
+      
+      // off_path Op는 제외
+      if (op->off_path) continue;
+      
+      // 매칭 성공 - 가장 최근 Op 반환
+      ASSERT(proc_id, op->proc_id == proc_id);
+      return op;
+    }
+  }
+  
+  // 매칭 실패
+  return NULL;
+}
+
+}  // extern "C"

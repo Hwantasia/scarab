@@ -65,6 +65,7 @@ static void tea_shadow_rat_reset(uns proc_id, TEA_Rename_State* rs) {
             rs->map_table[arch] = tea_phys;
             rs->map_valid[arch] = TRUE;
             rs->phys_regs[tea_phys].valid = TRUE;
+            rs->phys_regs[tea_phys].ready_cycle = 0; // [TEA-Phase2] Live-in is ready immediately
             rs->phys_regs[tea_phys].refcount = 0;
         } else {
             rs->map_table[arch] = TEA_PHYS_INVALID;
@@ -173,7 +174,10 @@ void tea_rename_stage(uns proc_id) {
     int ops_consumed = 0;
     for (int k = 0; k < rename_count; ++k) {
         Op* op = dbuf->ops[k];
-        if (!op || !op->inst_info || !op->table_info) continue;
+        // [TEA-Verify] Basic Op validity checks
+        ASSERT(proc_id, op != NULL);
+        ASSERT(proc_id, op->inst_info != NULL);
+        ASSERT(proc_id, op->table_info != NULL);
 
         int required_phys = op->table_info->num_dest_regs;
         if (rs->free_count < required_phys) break; 
@@ -191,18 +195,26 @@ void tea_rename_stage(uns proc_id) {
 
             if (arch_id >= 0 && rs->map_valid[arch_id]) {
                 phys = rs->map_table[arch_id];
+                // [TEA-Verify] Valid mapping check
+                ASSERT(proc_id, phys >= 0 && phys < TEA_MAX_PHYS_REGS);
             }
+            
             // 스냅샷이 제대로 되었다면 모든 Arch Reg에 대해 TEA Phys가 할당되어 있어야 함
             // 만약 없다면 예외처리
             if (phys == TEA_PHYS_INVALID && arch_id >= 0) {
                  // Fallback: should not happen ideally if snapshot is correct
                  phys = tea_alloc_phys(rs);
+                 ASSERT(proc_id, phys != TEA_PHYS_INVALID); // Ensure allocation succeeded
                  rs->phys_regs[phys].valid = TRUE; 
                  rs->map_table[arch_id] = phys;
                  rs->map_valid[arch_id] = TRUE;
             }
 
             meta->src_phys_id[s] = phys;
+            // [TEA-Phase2] Check ready_cycle. For now, we just pass the valid flag, 
+            // but in Issue stage we should check cycle >= ready_cycle.
+            // Here we assume if valid=TRUE, it's ready. 
+            // Ideally, we should propagate ready_cycle to meta or check it in Issue.
             meta->src_ready[s] = (phys != TEA_PHYS_INVALID) ? rs->phys_regs[phys].valid : TRUE;
             
             if (phys != TEA_PHYS_INVALID) {
@@ -221,20 +233,36 @@ void tea_rename_stage(uns proc_id) {
             int new_phys = TEA_PHYS_INVALID;
             if (arch_id >= 0) {
                 new_phys = tea_alloc_phys(rs);
+                ASSERT(proc_id, new_phys != TEA_PHYS_INVALID); // [TEA-Verify] Allocation check
+                
                 rs->map_table[arch_id] = new_phys;
                 rs->map_valid[arch_id] = TRUE;
                 
                 rs->phys_regs[new_phys].valid = FALSE; 
+                rs->phys_regs[new_phys].ready_cycle = MAX_CTR; // [TEA-Phase2] Not ready yet
                 rs->phys_regs[new_phys].producer_op = op;
             }
 
             meta->dst_phys_id[d] = new_phys;
             if (new_phys != TEA_PHYS_INVALID) {
+                // [TEA-Verify] Ensure we are not overwriting an existing valid mapping without reason
+                // (Though in TEA we just overwrite, checking range is good)
+                ASSERT(proc_id, new_phys < TEA_MAX_PHYS_REGS);
                 op->dst_reg_id[d][REG_TABLE_TYPE_PHYSICAL] = new_phys;
             }
         }
 
         meta->op = op;
+        meta->main_op = op->tea_main_op_candidate;  // [TEA Early Binding] Fetch\uc5d0\uc11c \ucc3e\uc740 Main Op
+        
+        // Debugging ASSERT
+        if (meta->main_op) {
+            ASSERT(proc_id, meta->main_op->op_pool_valid);
+            ASSERT(proc_id, meta->main_op->inst_info);
+            if (op->inst_info) {
+                ASSERT(proc_id, meta->main_op->inst_info->addr == op->inst_info->addr);
+            }
+        }
         
         iq->entries[iq->tail].op = op;
         iq->entries[iq->tail].meta = meta;
@@ -252,3 +280,28 @@ void tea_rename_stage(uns proc_id) {
         if (dbuf->num_ops < 0) dbuf->num_ops = 0;
     }
 }
+// Add to end of tea_rename.c
+
+/**
+ * @brief TEA Op의 Metadata를 가져옴
+ * 
+ * @param op TEA Op
+ * @return TEA_Op_Metadata 포인터, 없으면 NULL
+ */
+TEA_Op_Metadata* tea_get_op_metadata(Op* op) {
+    if (!op) return NULL;
+    
+    // tea_issue_queue is a single Issue Queue (not per processor)
+    // It's the global Issue Queue for TEA
+    if (!tea_issue_queue) return NULL;
+    
+    // Search through Issue Queue entries
+    for (uns i = 0; i < TEA_MAX_NODE; ++i) {
+        if (tea_issue_queue->entries[i].op == op) {
+            return tea_issue_queue->entries[i].meta;
+        }
+    }
+    
+    return NULL;
+}
+

@@ -248,6 +248,11 @@ void op_pool_setup_op(uns proc_id, Op* op) {
   op->recovery_scheduled = FALSE;
   op->redirect_scheduled = FALSE;
   op->fetched_from_uop_cache = FALSE;
+  
+  op->tea_main_op_candidate = NULL;  // [TEA Early Binding] 초기화
+  op->tea_main_op_link = NULL;       // [TEA Shadow FTQ] 초기화
+  op->tea_main_op_num = 0;           // [TEA Shadow FTQ] 초기화
+  op->tea_main_unique_num = 0;       // [TEA Shadow FTQ] 초기화
 
   for (ii = 0; ii < NUM_DEP_TYPES; ii++)
     op->wake_up_signaled[ii] = FALSE;

@@ -64,6 +64,7 @@ void tea_fetch_stage(uns proc_id, Addr current_fetch_addr);
 Flag tea_thread_is_active(uns proc_id);
 Flag tea_thread_needs_rat_sync(uns proc_id);
 void tea_thread_ack_sync(uns proc_id);
+void tea_reset_fetch_queue(TEA_Fetch_Queue* fq);
 #ifdef __cplusplus
 }
 #endif

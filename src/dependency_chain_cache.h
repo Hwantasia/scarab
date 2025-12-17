@@ -34,6 +34,7 @@ typedef struct Dependency_Chain_Cache_Entry_struct {
   Counter       h2p_branch_op_num;
   uns           chain_length;
   Op            chain[MAX_CHAIN_LENGTH];
+  uns           chain_pos[MAX_CHAIN_LENGTH];  // Option B: 원래 블록 내 위치 저장
   uint64_t     dependency_mask;     // 기본 블록 내 의존성 비트마스크
   uns          total_ops_in_block;  // 마스크와 함께 사용할 블록의 총 명령어 수
 } Dependency_Chain_Cache_Entry;
@@ -68,6 +69,7 @@ void periodically_reset_caches(uns proc_id);
 void cycle_backward_walk_engine(uns proc_id); 
 Dependency_Chain_Cache_Entry* get_dependency_chain(uns proc_id, Addr pc);
 Dependency_Chain_Cache_Entry* get_dependency_chain_block(uns proc_id, Addr pc);
+Flag is_empty_block_tag_hit(uns proc_id, Addr block_start_pc);
 extern Dependency_Chain_Cache_Entry** dependency_chain_caches;
 extern Dependency_Chain_Cache_Entry** block_caches;
 

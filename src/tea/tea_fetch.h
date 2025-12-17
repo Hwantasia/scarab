@@ -45,6 +45,7 @@ typedef struct TEA_Context_struct {
     TEA_Fetch_Queue fetch_queue;   // TEA 전용 fetch 버퍼
     TEA_Thread_State state;        // 상태 머신
     Flag            shadow_rat_needs_sync; // 새 체인을 위해 Shadow RAT 동기화 필요
+    Flag            terminated_by_miss;   // Block Cache miss로 인한 terminate/drain 중 (새 fetch 금지)
     Addr            trigger_pc;    // 현재 체인을 기동한 분기 PC
     Addr            last_fetch_pc; // 가장 최근에 enque한 fetch PC (디버깅용)
     Counter         blocks_fetched;// 누적 block enqueue 수 (리소스 모니터링용)

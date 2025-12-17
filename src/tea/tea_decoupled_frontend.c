@@ -280,18 +280,21 @@ void tea_shadow_ft_add_op(uns proc_id, Op* main_op) {
     }
     
     /* Clone the Main Op */
+    uns slot = tea_ft->op_count;
     Op* tea_op = tea_clone_op_from_main(proc_id, main_op);
     if (!tea_op) return;
     
     /* Add to FT */
-    tea_ft->ops[tea_ft->op_count] = tea_op;
-    tea_ft->op_count++;
+    tea_ft->ops[slot] = tea_op;
+    tea_ft->op_pcs[slot] = main_op->inst_info ? main_op->inst_info->addr : 0;
+    tea_ft->op_cf_types[slot] = (main_op->table_info) ? (uns8)main_op->table_info->cf_type : (uns8)NOT_CF;
+    tea_ft->op_count = slot + 1;
     
     /* Update PC range */
-    if (tea_ft->op_count == 1) {
-        tea_ft->start_pc = main_op->inst_info->addr;
+    if (slot == 0) {
+        tea_ft->start_pc = tea_ft->op_pcs[slot];
     }
-    tea_ft->end_pc = main_op->inst_info->addr;
+    tea_ft->end_pc = tea_ft->op_pcs[slot];
 }
 
 /**************************************************************************************/

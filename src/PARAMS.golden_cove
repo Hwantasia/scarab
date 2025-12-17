@@ -247,14 +247,14 @@
 ### Debug
 --debug_inst_start          0
 --debug_inst_stop           -1
---debug_cycle_start         10000
---debug_cycle_stop          13000
+--debug_cycle_start         120000
+--debug_cycle_stop          130000
 #--debug_model              1  # debug Every pipleline (targeting at retiring)
---debug_map                1
+#--debug_map                1
 #--debug_node_stage         1       # showing what CPU is doing now / show ROB and RS at before recovery and after recovery
 #--debug_thread             1
---debug_icache_stage       1
---debug_exec_stage         1
+#--debug_icache_stage       1
+#--debug_exec_stage         1
 #--debug_pin_exec_driven    1
 #--debug_retired_uops       1
 --debug_bp                 1
@@ -268,11 +268,12 @@
 #--debug_decoupled_fe       1
 #--debug_power_utils        1
 #--debug_fdip               1
---debug_issue_queue        1
+#--debug_issue_queue        1
 #--debug_hbt                1
 #--debug_decoupled_fe       1
 --debug_tea_fetch_log       1
 --debug_tea_early_recovery_log  1
+--debug_tea_h2p_fetch_log   1
 
 
 ## Stats and Params

@@ -127,8 +127,12 @@ DEF_PARAM(tea_rs_size, TEA_RS_SIZE, uns, uns, 32, )
 DEF_PARAM(tea_exec_latency, TEA_EXEC_LAT, uns, uns, 1, )
 DEF_PARAM(tea_early_recovery_cycles, TEA_EARLY_RECOVERY_CYCLES, uns, uns, 0, )
 DEF_PARAM(tea_shadow_ftq_size, TEA_SHADOW_FTQ_SIZE, uns, uns, 128, )
+
+/******** [TEA] TEA-related debug logging flags
+ * PARAMETERS*********************************************************/
 DEF_PARAM(debug_tea_shadow_ftq, DEBUG_TEA_SHADOW_FTQ, Flag, Flag, FALSE, )
 DEF_PARAM(debug_tea_early_recovery_log, DEBUG_TEA_EARLY_RECOVERY_LOG, Flag, Flag, FALSE, )
+DEF_PARAM(debug_tea_h2p_fetch_log, DEBUG_TEA_H2P_FETCH_LOG, Flag, Flag, FALSE, )
 DEF_PARAM(debug_tea_fetch_log, DEBUG_TEA_FETCH_LOG, Flag, Flag, FALSE, )
 DEF_PARAM(rs_fill_width, RS_FILL_WIDTH, uns, uns, 8, )
 DEF_PARAM(node_table_size, NODE_TABLE_SIZE, uns, uns, 256, )

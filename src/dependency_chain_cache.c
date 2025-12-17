@@ -208,7 +208,9 @@ void add_dependency_chain(uns proc_id, Op* ordered_ops, int ordered_op_count) {
                 for (int j = 0; j < instructions_in_block; ++j) {
                     if ((block_entry->dependency_mask >> j) & 1ULL) {
                         if (block_entry->chain_length < MAX_CHAIN_LENGTH) {
-                            block_entry->chain[block_entry->chain_length++] = ordered_ops[current_block_start_idx + j];
+                            block_entry->chain[block_entry->chain_length] = ordered_ops[current_block_start_idx + j];
+                            block_entry->chain_pos[block_entry->chain_length] = j;  // Option B: 원래 블록 내 위치 저장
+                            block_entry->chain_length++;
                         }
                     }
                 }
@@ -278,8 +280,39 @@ Dependency_Chain_Cache_Entry* get_dependency_chain_block(uns proc_id, Addr pc) {
     ASSERT(proc_id < NUM_CORES, "proc_id out of bounds\n");
     int entry_index = pc % BLOCK_CACHE_SIZE;
     Dependency_Chain_Cache_Entry* entry = &block_caches[proc_id][entry_index];
-    if (entry->is_valid && entry->h2p_branch_pc == pc) {
+    if (!entry->is_valid) return NULL;
+    
+    /* Fast path: PC가 블록 시작 PC와 동일한 경우 */
+    if (entry->h2p_branch_pc == pc) {
         return entry;
     }
+    
+    /* Slow path: chain[]에 포함된 Op PC와 매칭되는지 확인
+     *  - Block Cache는 블록 시작 PC로 태그되므로, 같은 블록의 나머지 uop는
+     *    다른 인덱스로 매핑되어 miss가 날 수 있다.
+     *  - chain 배열에는 dependency_mask가 1인 uop만 들어 있으므로,
+     *    여기서 찾으면 “TEA가 실행해야 할 uop”임을 보장한다.
+     */
+    for (uns i = 0; i < entry->chain_length && i < MAX_CHAIN_LENGTH; i++) {
+        if (entry->chain[i].inst_info &&
+            entry->chain[i].inst_info->addr == pc) {
+            return entry;  /* Same block, dependency-marked uop */
+        }
+    }
+    
     return NULL;
+}
+
+Flag is_empty_block_tag_hit(uns proc_id, Addr block_start_pc) {
+    ASSERT(proc_id < NUM_CORES, "proc_id out of bounds\n");
+    if (!empty_block_tag_store || !empty_block_tag_store[proc_id]) {
+        return FALSE;
+    }
+    if (block_start_pc == 0) {
+        return FALSE;
+    }
+
+    int entry_index = block_start_pc % EMPTY_BLOCK_TAG_STORE_SIZE;
+    Block_Cache_Tag_Entry* entry = &empty_block_tag_store[proc_id][entry_index];
+    return (entry->is_valid && entry->block_start_pc == block_start_pc) ? TRUE : FALSE;
 }

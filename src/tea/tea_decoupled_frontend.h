@@ -50,6 +50,8 @@ extern "C" {
 
 typedef struct TEA_FT_struct {
     Op* ops[TEA_MAX_OP_PER_FT];     /* TEA Op pointers (cloned from Main) */
+    Addr op_pcs[TEA_MAX_OP_PER_FT]; /* Original per-slot PC (survives ops[i]==NULL) */
+    uns8 op_cf_types[TEA_MAX_OP_PER_FT]; /* Original per-slot cf_type (NOT_CF if non-CF) */
     uns op_count;                   /* Number of Ops in this FT */
     Addr start_pc;                  /* First instruction PC */
     Addr end_pc;                    /* Last instruction PC */

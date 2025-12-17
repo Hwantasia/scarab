@@ -70,6 +70,7 @@ list(APPEND srcs
     tea/tea_issue_queue.c
     tea/tea_exec_stage.c
     tea/tea_decoupled_frontend.c
+    log/tea_h2p_fetch_log.c
 )
 list(REMOVE_DUPLICATES srcs)
 

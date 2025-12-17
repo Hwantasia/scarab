@@ -2,6 +2,7 @@
 #include "tea_fetch.h"
 #include "core.param.h"
 #include "globals/global_vars.h"
+#include "log/tea_h2p_fetch_log.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -58,10 +59,23 @@ void tea_decode_stage(uns proc_id) {
     if (decode_width > dbuf->capacity) {
         decode_width = dbuf->capacity;
     }
+    
+    /* Initialize H2P fetch log if needed */
+    static Flag h2p_log_initialized = FALSE;
+    if (!h2p_log_initialized && DEBUG_TEA_H2P_FETCH_LOG) {
+        init_tea_h2p_fetch_log();
+        h2p_log_initialized = TRUE;
+    }
 
     while (dbuf->num_ops < decode_width && fq->count > 0) {
         Op* op = fq->entries[fq->head];
         op->decode_cycle = cycle_count;
+        
+        /* Log H2P branch fetch from TEA Fetch Queue */
+        if (DEBUG_TEA_H2P_FETCH_LOG) {
+            log_tea_h2p_fetch(proc_id, cycle_count, op);
+        }
+        
         dbuf->ops[dbuf->num_ops++] = op;
 
         fq->head = (fq->head + 1) % TEA_FETCH_QUEUE_SIZE;
